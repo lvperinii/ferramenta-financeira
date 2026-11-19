@@ -69,7 +69,9 @@ investimentos conectados via Open Finance (Pluggy), com:
 | Navegador obtém acesso a dados bancários | O navegador só recebe o *connect token* (≈30 min, sem acesso a dados) |
 | Webhook falso | Ver 3.3 |
 | CSRF em rotas que alteram estado | Cookies `SameSite=Lax` (Auth.js) + checagem de `Origin` nas rotas POST |
-| Clickjacking / injeção | `X-Frame-Options: DENY`, `frame-ancestors 'none'`, CSP completa na Fase 1 |
+| Clickjacking / injeção | `X-Frame-Options: DENY`, `frame-ancestors 'none'`, CSP completa (seção 3.5) |
+| Navegador manda `itemId` de outra pessoa | `POST /api/pluggy/items` confere na Pluggy se o item tem o **seu** `clientUserId` |
+| Abuso do "Sincronizar agora" | Intervalo mínimo de 5 min por conexão |
 | Dependência vulnerável | `npm audit` no CI + Dependabot semanal |
 | Vazamento por logs | Logs registram só o tipo de erro, nunca tokens, valores ou payloads completos |
 | Perda de dados | Backups e restauração pontual do Neon **[verificar retenção no plano escolhido]** |
@@ -101,10 +103,15 @@ A skill de integração da Pluggy não descreve assinatura nos webhooks
 
 ### 3.5 Headers HTTP
 
-Já ativos: HSTS, `nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy`,
-`Permissions-Policy`, CSP parcial (`frame-ancestors`, `base-uri`, `form-action`).
-Fase 1: CSP completa com `script-src`/`frame-src`/`connect-src` restritos aos
-domínios do widget da Pluggy.
+Ativos: HSTS, `nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy`,
+`Permissions-Policy` e CSP completa (`next.config.ts`):
+
+- `default-src 'self'`; `connect-src 'self'`; `object-src 'none'`
+- `frame-src https://connect.pluggy.ai` (único iframe permitido: o widget)
+- `form-action 'self' https://accounts.google.com` (login)
+- `script-src`/`style-src` com `'unsafe-inline'`: abordagem "sem nonce" do guia
+  de CSP do Next 16, compatível com páginas estáticas; o widget também injeta
+  `<style>`. Melhoria futura possível: CSP com nonce (exige renderização dinâmica).
 
 ## 4. Fluxos principais
 
@@ -114,22 +121,45 @@ domínios do widget da Pluggy.
 3. Callback `signIn` aceita só e-mail verificado e presente em `ALLOWED_EMAILS`.
 4. Sessão JWT criptografada em cookie `HttpOnly`, `Secure`, `SameSite=Lax`, 8 h.
 
-### 4.2 Conectar um banco (Fase 1)
-1. Navegador → `POST /api/pluggy/connect-token` (exige sessão e mesma origem).
-2. Servidor cria o token com `createConnectToken(undefined, { clientUserId, webhookUrl, avoidDuplicates })`.
-   *Atenção:* no `pluggy-sdk` 0.94 o 1º parâmetro é o `itemId`; as opções vão no 2º.
-3. Widget Pluggy Connect abre no navegador com esse token; você autoriza no banco.
-4. `onSuccess` devolve o `itemId` → `POST /api/pluggy/items` grava a conexão.
-5. Pluggy sincroniza e envia `item/created`/`item/updated` ao webhook.
+### 4.2 Conectar um banco
+1. Botão "Conectar banco" (`src/app/components/ConnectBank.tsx`) → `POST /api/pluggy/connect-token` (exige sessão e mesma origem).
+2. Servidor cria o token com `createConnectToken(itemId?, { clientUserId, webhookUrl, avoidDuplicates })`.
+   *Atenção:* no `pluggy-sdk` 0.94 o 1º parâmetro é o `itemId` (só para **reconectar**); as opções vão no 2º.
+   `webhookUrl` = `APP_URL` + `/api/webhooks/pluggy/` + `PLUGGY_WEBHOOK_SECRET` (só se `APP_URL` for HTTPS).
+3. Widget Pluggy Connect abre (iframe de `connect.pluggy.ai`); você autoriza no banco.
+4. `onSuccess` devolve o `itemId` → `POST /api/pluggy/items`, que **confere na Pluggy** que o item tem o seu `clientUserId`, grava a conexão e agenda a 1ª sincronização com `after()`.
+5. A Pluggy envia avisos ao webhook quando há dados novos.
+6. **Reconectar** (senha mudou, MFA): o painel mostra "Reconectar" e o widget abre com `updateItem`.
 
-### 4.3 Sincronização (Fase 1)
-- `item/created|updated` → buscar contas e investimentos do item e fazer *upsert*.
-- `transactions/created` → buscar pelo `createdTransactionsLink`.
-- `transactions/updated|deleted` → atualizar/apagar pelos `transactionIds`.
-- `item/error|waiting_user_input` → marcar a conexão e mostrar aviso no painel.
-- `item/deleted` → apagar dados locais.
-- Paginação sempre (regra `data-pagination` da skill).
-- Botão "Atualizar agora" com limite de frequência (evita custo e bloqueio).
+### 4.3 Sincronização (`src/lib/sync.ts`)
+Desenho escolhido: **qualquer** aviso de um item conhecido dispara uma
+ressincronização completa a partir da API. O conteúdo do aviso só serve para
+saber *qual* item atualizar — nunca como dado.
+
+1. `fetchItem` → atualiza status. Se 404 → apaga a conexão local (cascade).
+2. Se o status não for `UPDATED`, para aqui (dados ainda incompletos).
+3. Contas: `fetchAccounts` → *upsert*; contas que sumiram são apagadas.
+4. Transações: `fetchAllTransactions(accountId, { dateFrom })` (cursor; o método
+   por páginas está obsoleto no SDK) dos últimos **365 dias** → *upsert* em lotes;
+   transações da janela que sumiram na Pluggy são apagadas. A **categoria
+   escolhida por você** (`category_id`) nunca é sobrescrita.
+5. Investimentos: `fetchInvestments` paginado → *upsert*; os que sumiram são apagados.
+6. Sinal do valor vem do `type` (DEBIT negativo, CREDIT positivo), não do sinal
+   original, que varia entre conta e cartão.
+7. "Sincronizar agora" no painel, com intervalo mínimo de 5 min.
+
+Webhook (`/api/webhooks/pluggy/[secret]`): segredo errado → 404; corpo validado
+com zod; `event_id` único (avisos repetidos ignorados); resposta imediata e
+processamento com `after()`; só `event`, `eventId` e `itemId` são guardados.
+
+**Testado localmente** com Postgres e uma Pluggy simulada: criação, atualização,
+remoção de contas/transações, preservação da categoria própria, item apagado,
+segredo errado, JSON inválido e aviso repetido.
+
+### 4.4 Desconectar um banco
+`removerConexao` (Server Action): confere o dono → `deleteItem` na Pluggy
+(revoga o acesso e apaga os dados de lá) → apaga os dados locais (cascade) →
+registra em `audit_log`. Se a Pluggy falhar, nada é apagado localmente.
 
 ## 5. Modelo de dados
 
@@ -147,8 +177,12 @@ Definido em `src/db/schema.ts`:
 | `webhook_events` | Avisos recebidos | `event_id` |
 | `audit_log` | Ações sensíveis | — |
 
-Migrações: `npm run db:generate` (gera SQL para revisão) → `npm run db:migrate`
-(usa a connection string **direta**). Testar migrações num *branch* do Neon antes de produção.
+Migrações: `npm run db:generate` (gera SQL em `drizzle/` para revisão) →
+commit → ao chegar no `main`, o workflow **"Migrações do banco"**
+(`.github/workflows/db-migrate.yml`) roda `npm run db:migrate` com o segredo
+`DATABASE_URL_UNPOOLED` do GitHub (connection string **direta**). Também pode
+ser disparado manualmente na aba Actions. Migrações grandes: testar antes num
+*branch* do Neon.
 
 ## 6. Organização do código
 
@@ -159,13 +193,20 @@ src/
     login/page.tsx                   login com Google
     api/auth/[...nextauth]/route.ts  rotas do Auth.js
     api/pluggy/connect-token/        cria connect token
-    api/webhooks/pluggy/[secret]/    (Fase 1) recebe avisos
+    api/pluggy/items/                registra banco conectado
+    api/webhooks/pluggy/[secret]/    recebe avisos da Pluggy
+    actions.ts                       sincronizar / desconectar (Server Actions)
+    components/                      ConnectBank (widget), ConnectionActions
   auth.ts                            configuração do Auth.js
   proxy.ts                           checagem de sessão em todas as rotas
   db/schema.ts, db/index.ts          Drizzle + conexão
   lib/env.ts                         variáveis de ambiente validadas
   lib/pluggy.ts                      cliente Pluggy (só servidor)
-  lib/session.ts                     helpers de sessão e origem
+  lib/session.ts                     helpers de sessão, origem e leitura de JSON
+  lib/sync.ts                        sincronização com a Pluggy
+  lib/money.ts                       conversão/formatação de dinheiro
+  lib/users.ts, lib/connections.ts   usuário, auditoria, posse de conexões
+drizzle/                             migrações SQL geradas
 docs/                                arquitetura e plano
 .claude/skills/                      skills de referência para o Claude
 ```
@@ -189,6 +230,8 @@ docs/                                arquitetura e plano
 |---|---|
 | Preço da Pluggy e se o sandbox é gratuito | **[verificar]** no site/painel da Pluggy |
 | Assinatura de webhook da Pluggy | **[verificar]**; mitigado pelo desenho da seção 3.3 |
+| Formato do erro 404 da Pluggy (`isPluggyNotFound`) | **[verificar]** com o sandbox; hoje aceita `code`/`statusCode`/`status` = 404 |
+| Sincronização longa (muitas transações) | Limite de 60 s por função; se estourar, dividir por conta |
 | Limites dos planos gratuitos de Vercel e Neon | **[verificar]** antes da produção |
 | `next-auth` v5 ainda em beta | Acompanhar releases; Dependabot ajuda |
 | Next.js 16 mudou convenções (ex.: `middleware` → `proxy`) | Seguir `node_modules/next/dist/docs/` |

@@ -1,8 +1,13 @@
-import { getServerEnv } from "@/lib/env";
-import { getPluggyClient, pluggyUserId } from "@/lib/pluggy";
-import { getSessionEmail, isSameOrigin } from "@/lib/session";
+import { z } from "zod";
+import { findOwnedConnection } from "@/lib/connections";
+import { getPluggyClient, pluggyUserId, pluggyWebhookUrl } from "@/lib/pluggy";
+import { getSessionEmail, isSameOrigin, readJson } from "@/lib/session";
+import { getOrCreateUserId } from "@/lib/users";
 
 const noStore = { "Cache-Control": "no-store" };
+
+// Corpo opcional: { connectionId } para reconectar um banco existente.
+const bodySchema = z.object({ connectionId: z.uuid().optional() }).strict();
 
 /**
  * Cria um Connect Token (validade curta, sem acesso a dados) para o
@@ -19,15 +24,28 @@ export async function POST(request: Request) {
     return Response.json({ error: "unauthorized" }, { status: 401, headers: noStore });
   }
 
+  const parsed = bodySchema.safeParse(await readJson(request));
+  if (!parsed.success) {
+    return Response.json({ error: "invalid_body" }, { status: 400, headers: noStore });
+  }
+
   try {
-    const env = getServerEnv();
+    // Reconexão: só para uma conexão que pertence a você.
+    let itemId: string | undefined;
+    if (parsed.data.connectionId) {
+      const userId = await getOrCreateUserId(email);
+      const connection = await findOwnedConnection(userId, { id: parsed.data.connectionId });
+      if (!connection) return Response.json({ error: "not_found" }, { status: 404, headers: noStore });
+      itemId = connection.pluggyItemId;
+    }
+
     // Assinatura do pluggy-sdk 0.94: createConnectToken(itemId?, options?)
-    const { accessToken } = await getPluggyClient().createConnectToken(undefined, {
+    const { accessToken } = await getPluggyClient().createConnectToken(itemId, {
       clientUserId: pluggyUserId(email),
-      webhookUrl: env.PLUGGY_WEBHOOK_URL,
+      webhookUrl: pluggyWebhookUrl(),
       avoidDuplicates: true,
     });
-    return Response.json({ accessToken }, { headers: noStore });
+    return Response.json({ accessToken, itemId: itemId ?? null }, { headers: noStore });
   } catch (error) {
     // Registra só o tipo do erro; nunca credenciais ou respostas completas.
     console.error("connect-token: falha ao criar token", error instanceof Error ? error.name : "unknown");

@@ -5,6 +5,9 @@
   --border: #d9dde3;
   --accent: #1f6feb;
   --accent-contrast: #ffffff;
+  --muted: #5f6b7a;
+  --negative: #c62828;
+  --positive: #1b7f3b;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -15,6 +18,9 @@
     --border: #2c313b;
     --accent: #4c8dff;
     --accent-contrast: #0f1115;
+    --muted: #9aa4b2;
+    --negative: #ff6b6b;
+    --positive: #4cc77a;
   }
 }
 
