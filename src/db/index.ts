@@ -4,6 +4,7 @@ import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
 import { getServerEnv } from "@/lib/env";
 import * as schema from "./schema";
+import { withVerifyFullSsl } from "./url";
 
 let db: NodePgDatabase<typeof schema> | undefined;
 
@@ -16,7 +17,7 @@ export function getDb(): NodePgDatabase<typeof schema> {
   if (db) return db;
   const { DATABASE_URL } = getServerEnv();
   if (!DATABASE_URL) throw new Error("DATABASE_URL não configurada");
-  const pool = new Pool({ connectionString: DATABASE_URL, max: 5 });
+  const pool = new Pool({ connectionString: withVerifyFullSsl(DATABASE_URL), max: 5 });
   attachDatabasePool(pool);
   db = drizzle({ client: pool, schema });
   return db;

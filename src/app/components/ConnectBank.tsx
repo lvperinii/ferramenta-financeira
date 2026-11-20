@@ -1,9 +1,16 @@
 "use client";
 
 import { useState } from "react";
+import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
-import { PluggyConnect } from "react-pluggy-connect";
 import styles from "../page.module.css";
+
+// O react-pluggy-connect acessa `window` assim que é carregado, o que
+// derrubava o servidor (ReferenceError: window is not defined).
+// `ssr: false` faz o widget ser carregado só no navegador.
+const PluggyConnect = dynamic(() => import("react-pluggy-connect").then((mod) => mod.PluggyConnect), {
+  ssr: false,
+});
 
 type Props = {
   includeSandbox: boolean;

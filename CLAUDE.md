@@ -13,6 +13,12 @@
   - Toda consulta filtra pelo usuário logado.
   - Dados de webhook nunca são gravados direto: refazer a busca na API da Pluggy.
   - Nunca logar tokens, valores de transação ou payloads completos.
+- Bibliotecas que acessam `window`/`document` ao serem importadas (ex.: `react-pluggy-connect`)
+  só podem ser carregadas com `dynamic(() => import(...), { ssr: false })` dentro de um Client Component;
+  senão o servidor cai com `ReferenceError: window is not defined`.
+- Componentes de servidor que dependem da requisição (sessão, banco) chamam `await connection()` primeiro
+  (Cache Components do Next 16).
+- Testes locais: testar páginas também **logado** (gerar cookie de sessão com `next-auth/jwt` `encode`).
 - Dinheiro: `numeric(14,2)` / strings; nunca `number` em ponto flutuante para cálculos.
 - Banco: mudanças de schema só via Drizzle (`npm run db:generate`), nunca SQL manual.
 - Antes de abrir PR: `npm run check` e `npm run build`.
