@@ -24,8 +24,16 @@ const serverEnvSchema = z.object({
   // Pluggy (Open Finance) — usadas só no servidor
   PLUGGY_CLIENT_ID: z.string().min(1),
   PLUGGY_CLIENT_SECRET: z.string().min(1),
-  // URL pública do webhook (opcional até a Fase 1)
-  PLUGGY_WEBHOOK_URL: z.url().optional(),
+  // Segredo que compõe a URL do webhook: /api/webhooks/pluggy/<segredo>
+  PLUGGY_WEBHOOK_SECRET: z.string().min(32, "PLUGGY_WEBHOOK_SECRET precisa ter pelo menos 32 caracteres").optional(),
+  // Mostra o banco de testes da Pluggy no widget ("true" em desenvolvimento)
+  PLUGGY_INCLUDE_SANDBOX: z
+    .enum(["true", "false"])
+    .default("false")
+    .transform((value) => value === "true"),
+
+  // Endereço público do app (ex.: https://meu-app.vercel.app), usado no webhook
+  APP_URL: z.url().optional(),
 
   // Banco de dados (Neon Postgres). Pooled para o app; direct para migrações.
   DATABASE_URL: z.string().min(1).optional(),

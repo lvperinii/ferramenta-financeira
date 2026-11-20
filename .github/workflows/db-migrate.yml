@@ -1,0 +1,42 @@
+name: Migrações do banco
+
+# Aplica as migrações SQL de ./drizzle no banco de produção (Neon).
+# Roda quando uma migração nova chega ao main, ou manualmente
+# (aba Actions > "Migrações do banco" > Run workflow).
+on:
+  push:
+    branches: [main]
+    paths: ["drizzle/**"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Nunca rodar duas migrações ao mesmo tempo.
+concurrency:
+  group: db-migrate
+  cancel-in-progress: false
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Conferir segredo
+        env:
+          DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+        run: |
+          if [ -z "$DATABASE_URL_UNPOOLED" ]; then
+            echo "::error::Segredo DATABASE_URL_UNPOOLED não configurado (Settings > Secrets and variables > Actions)."
+            exit 1
+          fi
+      - name: Aplicar migrações
+        env:
+          DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+        run: npm run db:migrate
