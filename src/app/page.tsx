@@ -1,11 +1,13 @@
 import { Suspense } from "react";
 import { redirect } from "next/navigation";
+import { connection } from "next/server";
 import { desc, eq } from "drizzle-orm";
 import { signOut } from "@/auth";
 import { getDb } from "@/db";
 import { accounts, connections, transactions } from "@/db/schema";
 import { getServerEnv } from "@/lib/env";
 import { formatBRL } from "@/lib/money";
+import { pluggyWebhookUrl } from "@/lib/pluggy";
 import { getSessionEmail } from "@/lib/session";
 import { getOrCreateUserId } from "@/lib/users";
 import { ConnectBank } from "./components/ConnectBank";
@@ -27,11 +29,17 @@ const dateTime = new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeStyl
 const dateOnly = new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeZone: "UTC" });
 
 async function Painel() {
+  // O painel depende da requisição (sessão, dados do banco): nada aqui é
+  // pré-renderizado. Sem isso, o Next 16 acusa uso de crypto no pré-render.
+  await connection();
+
   // Verificação definitiva no servidor (o proxy é só uma pré-checagem).
   const email = await getSessionEmail();
   if (!email) redirect("/login");
 
   const env = getServerEnv();
+  // Só indica se há URL de webhook; nunca exibe a URL (ela contém o segredo).
+  const webhookConfigured = pluggyWebhookUrl() !== undefined;
   const userId = await getOrCreateUserId(email);
   const db = getDb();
 
@@ -113,6 +121,11 @@ async function Painel() {
           ))}
         </ul>
         <ConnectBank includeSandbox={env.PLUGGY_INCLUDE_SANDBOX} />
+        <p className={styles.muted}>
+          {webhookConfigured
+            ? "Atualização automática (webhook): configurada. Bancos conectados a partir de agora recebem avisos da Pluggy."
+            : "Atualização automática (webhook): NÃO configurada — defina APP_URL (https://…) e PLUGGY_WEBHOOK_SECRET na Vercel. Enquanto isso, use “Sincronizar agora”."}
+        </p>
       </section>
 
       <section className={styles.card}>

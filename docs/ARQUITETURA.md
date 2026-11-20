@@ -99,7 +99,9 @@ A skill de integração da Pluggy não descreve assinatura nos webhooks
 - O e-mail **não** é enviado à Pluggy: o `clientUserId` é um HMAC do e-mail.
 - Remover uma conexão: apaga o item na Pluggy e, por `ON DELETE CASCADE`, contas, transações e investimentos locais.
 - Trilha de auditoria (`audit_log`) para conectar/remover banco e exportar dados.
-- Neon criptografa os dados em repouso **[verificar]**; conexões sempre com TLS (`sslmode=require`).
+- Neon criptografa os dados em repouso **[verificar]**; conexões sempre com TLS e
+  verificação do certificado: `src/db/url.ts` converte `sslmode=require` em
+  `sslmode=verify-full` (o `pg` v9 vai enfraquecer o significado de `require`).
 
 ### 3.5 Headers HTTP
 

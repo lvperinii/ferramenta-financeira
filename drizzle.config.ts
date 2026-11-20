@@ -1,4 +1,5 @@
 import { defineConfig } from "drizzle-kit";
+import { withVerifyFullSsl } from "./src/db/url";
 
 // Migrações usam a connection string DIRETA (sem "-pooler"),
 // conforme recomendação da Neon. Nunca rode migrações à mão em produção:
@@ -8,7 +9,7 @@ export default defineConfig({
   out: "./drizzle",
   dialect: "postgresql",
   dbCredentials: {
-    url: process.env.DATABASE_URL_UNPOOLED ?? "",
+    url: withVerifyFullSsl(process.env.DATABASE_URL_UNPOOLED ?? ""),
   },
   strict: true,
   verbose: true,
