@@ -7,7 +7,7 @@ Detalhes técnicos em [ARQUITETURA.md](./ARQUITETURA.md).
 | **0. Base** | Next.js + TypeScript, login com Google restrito, proxy de sessão, rota de connect token, schema do banco, headers de segurança, CI, Dependabot | — | ✅ |
 | **1. Conexão** | Widget Pluggy Connect, CSP completa, `POST /api/pluggy/items`, webhook com segredo e idempotência, sincronização de contas/transações/investimentos, reconectar/desconectar, workflow de migrações | Sandbox | ✅ testado com o sandbox da Pluggy (conectar, sincronizar, desconectar) |
 | **2. Gastos por categoria** | Lista com filtros, recategorizar, totais do mês | Sandbox | ⏳ |
-| **3. Orçamento mensal** | Limite por categoria, progresso, alerta | Sandbox | ⏳ |
+| **3. Orçamento mensal** | Limite por categoria, progresso, alerta | Sandbox | 🟡 orçamento por fatura do cartão (competência), cadastro de cartões/renda/contas fixas, parcelas projetadas e comprometimento futuro — testado com dados fictícios; falta validar com dados reais |
 | **4. Saldo e patrimônio** | Saldos e investimentos consolidados | Sandbox | ⏳ |
 | **5. Gráficos e relatórios** | Evolução mensal, comparativos, exportar CSV | Sandbox | ⏳ |
 | **6. Produção** | Credenciais reais, deploy de produção, conectar seus bancos | Real | ⏳ |

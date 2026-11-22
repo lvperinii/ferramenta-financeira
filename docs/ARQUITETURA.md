@@ -148,6 +148,10 @@ saber *qual* item atualizar — nunca como dado.
 5. Investimentos: `fetchInvestments` paginado → *upsert*; os que sumiram são apagados.
 6. Sinal do valor vem do `type` (DEBIT negativo, CREDIT positivo), não do sinal
    original, que varia entre conta e cartão.
+6a. Cartões: de `creditCardMetadata` são gravados `purchaseDate`, `installmentNumber`,
+   `totalInstallments` e `billId`. Faturas: `fetchCreditCardBills` (paginado) →
+   *upsert* em `credit_card_bills`. Segundo a doc da Pluggy, faturas só aparecem
+   depois de fechadas (depende do banco); uma falha aqui não interrompe o sync.
 7. "Sincronizar agora" no painel, com intervalo mínimo de 5 min.
 
 Webhook (`/api/webhooks/pluggy/[secret]`): segredo errado → 404; corpo validado
@@ -158,7 +162,36 @@ processamento com `after()`; só `event`, `eventId` e `itemId` são guardados.
 remoção de contas/transações, preservação da categoria própria, item apagado,
 segredo errado, JSON inválido e aviso repetido.
 
-### 4.4 Desconectar um banco
+### 4.4 Orçamento por fatura (`src/lib/finance/`)
+O orçamento é organizado por **competência = mês em que a fatura vence** (quando o
+dinheiro sai), não pelo mês da compra — o dono usa o prazo do cartão de propósito.
+
+- `core.ts` (puro, testado com `npm test`): ciclo de cada cartão (fechamento e
+  vencimento; dia 31 em meses curtos; compra no dia do fechamento configurável),
+  competência de cada transação, **projeção das parcelas futuras** (a API só traz
+  as já lançadas), contas fixas recorrentes, renda e limites "a partir de" um mês,
+  resumo do mês (separando parcelas de meses anteriores de compras novas),
+  comprometimento dos próximos 12 meses e "onde comprar hoje" (mais dias até pagar).
+- Competência de uma transação, em ordem de prioridade: vencimento da fatura
+  vinculada (`billId`) → `purchaseDate` + ciclo + (parcela − 1) meses → `date` +
+  ciclo, deslocando pela parcela só se o cartão estiver no modo "data da compra".
+- Pagamentos de fatura (crédito no cartão com descrição de pagamento) são
+  ignorados; outros créditos contam como estorno.
+- Categoria: escolha manual → regra por trecho da descrição → regra por categoria
+  da Pluggy → a própria categoria da Pluggy.
+- Dinheiro em centavos inteiros (`parseCents`/`centsToMoney`, conversão por texto).
+- `load.ts` (servidor): lê tudo do usuário logado e monta os lançamentos.
+- Páginas: `/orcamento` (visões) e `/configuracoes` (cartões, renda, contas fixas,
+  limites, regras); Server Actions em `app/configuracoes/actions.ts` conferem a
+  sessão, validam com zod e filtram toda escrita pelo usuário.
+
+**Testado localmente** com Postgres e dados fictícios, logado: formulários de
+configuração, competências, parcelas projetadas, pagamento de fatura ignorado,
+redirecionamento sem sessão. **[verificar com dados reais]**: se a data das
+parcelas na Pluggy é a da compra original ou a do lançamento (opção por cartão)
+e as descrições de pagamento de fatura de cada banco.
+
+### 4.5 Desconectar um banco
 `removerConexao` (Server Action): confere o dono → `deleteItem` na Pluggy
 (revoga o acesso e apaga os dados de lá) → apaga os dados locais (cascade) →
 registra em `audit_log`. Se a Pluggy falhar, nada é apagado localmente.
@@ -175,7 +208,12 @@ Definido em `src/db/schema.ts`:
 | `categories` | Categorias próprias | `(user_id, name)` |
 | `transactions` | Movimentações; categoria Pluggy + categoria própria | `pluggy_transaction_id` |
 | `investments` | Posições | `pluggy_investment_id` |
-| `budgets` | Limite por categoria e mês | `(user_id, category_id, month)` |
+| `budgets` | Limite por categoria, vale a partir de `month` | `(user_id, category_id, month)` |
+| `credit_card_bills` | Faturas fechadas dos cartões | `pluggy_bill_id` |
+| `cards` | Ciclo de cada cartão (fechamento, vencimento, pontos), ligado a uma conta CREDIT | `account_id` |
+| `fixed_expenses` | Contas fixas fora do cartão | — |
+| `incomes` | Renda a partir de um mês, ou só num mês (`one_off`) | `(user_id, month, one_off)` |
+| `category_rules` | Descrição/categoria Pluggy → categoria própria | — |
 | `webhook_events` | Avisos recebidos | `event_id` |
 | `audit_log` | Ações sensíveis | — |
 
@@ -192,6 +230,8 @@ ser disparado manualmente na aba Actions. Migrações grandes: testar antes num
 src/
   app/
     page.tsx                         painel (protegido)
+    orcamento/page.tsx               orçamento por competência, comprometimento futuro
+    configuracoes/                   cartões, renda, contas fixas, limites, regras
     login/page.tsx                   login com Google
     api/auth/[...nextauth]/route.ts  rotas do Auth.js
     api/pluggy/connect-token/        cria connect token
@@ -207,6 +247,9 @@ src/
   lib/session.ts                     helpers de sessão, origem e leitura de JSON
   lib/sync.ts                        sincronização com a Pluggy
   lib/money.ts                       conversão/formatação de dinheiro
+  lib/finance/core.ts                regras de fatura/orçamento (puro, testado)
+  lib/finance/load.ts, format.ts     carga do banco e formatação
+tests/                               testes (node --test)
   lib/users.ts, lib/connections.ts   usuário, auditoria, posse de conexões
 drizzle/                             migrações SQL geradas
 docs/                                arquitetura e plano
@@ -222,7 +265,7 @@ docs/                                arquitetura e plano
 | Produção | Credenciais reais | Branch principal do Neon | Google |
 
 - **Segredos:** variáveis de ambiente da Vercel, separadas por ambiente.
-- **CI:** lint, typecheck, build e `npm audit` em todo PR.
+- **CI:** lint, typecheck, testes, build e `npm audit` em todo PR.
 - **Observabilidade:** logs da Vercel sem dados sensíveis; status das conexões no painel.
 - **Backups:** restauração pontual do Neon; exportação CSV manual pelo app (Fase 5).
 

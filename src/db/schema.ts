@@ -101,6 +101,11 @@ export const transactions = pgTable(
     // Categoria escolhida por você; tem prioridade sobre a da Pluggy.
     categoryId: uuid("category_id").references(() => categories.id, { onDelete: "set null" }),
     status: text("status"), // POSTED | PENDING
+    // Cartão de crédito (creditCardMetadata da Pluggy)
+    purchaseDate: date("purchase_date"),
+    installmentNumber: integer("installment_number"),
+    totalInstallments: integer("total_installments"),
+    pluggyBillId: text("pluggy_bill_id"),
     createdAt,
     updatedAt,
   },
@@ -129,7 +134,108 @@ export const investments = pgTable(
   (t) => [uniqueIndex("investments_pluggy_investment_id_uq").on(t.pluggyInvestmentId)],
 );
 
-/** Limite mensal por categoria. `month` = primeiro dia do mês. */
+/** Faturas de cartão (só aparecem na Pluggy depois de fechadas; depende do banco). */
+export const creditCardBills = pgTable(
+  "credit_card_bills",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "cascade" }),
+    pluggyBillId: text("pluggy_bill_id").notNull(),
+    dueDate: date("due_date").notNull(),
+    closingDate: date("closing_date"),
+    totalAmount: money("total_amount"),
+    updatedAt,
+  },
+  (t) => [uniqueIndex("credit_card_bills_pluggy_bill_id_uq").on(t.pluggyBillId), index("credit_card_bills_account_idx").on(t.accountId)],
+);
+
+/**
+ * Cadastro dos cartões: ciclo de fechamento/vencimento usado para saber em que
+ * mês (competência) cada compra é paga. Ligado à conta CREDIT vinda da Pluggy.
+ */
+export const cards = pgTable(
+  "cards",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    accountId: uuid("account_id").references(() => accounts.id, { onDelete: "set null" }),
+    name: text("name").notNull(),
+    bank: text("bank"),
+    issuer: text("issuer"),
+    closingDay: integer("closing_day").notNull(),
+    dueDay: integer("due_day").notNull(),
+    closingDayGoesTo: text("closing_day_goes_to").notNull().default("next"), // next | current
+    installmentDateMode: text("installment_date_mode").notNull().default("purchase"), // purchase | posting
+    rewards: text("rewards"),
+    createdAt,
+  },
+  (t) => [index("cards_user_idx").on(t.userId), uniqueIndex("cards_account_uq").on(t.accountId)],
+);
+
+/** Contas fixas pagas fora do cartão. Meses no formato primeiro dia do mês. */
+export const fixedExpenses = pgTable(
+  "fixed_expenses",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    amount: money("amount").notNull(),
+    dueDay: integer("due_day").notNull(),
+    categoryId: uuid("category_id").references(() => categories.id, { onDelete: "set null" }),
+    startMonth: date("start_month"),
+    endMonth: date("end_month"),
+    createdAt,
+  },
+  (t) => [index("fixed_expenses_user_idx").on(t.userId)],
+);
+
+/**
+ * Renda mensal. Vale a partir de `month` até o próximo registro;
+ * `oneOff` = só naquele mês (13º, bônus).
+ */
+export const incomes = pgTable(
+  "incomes",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    month: date("month").notNull(),
+    amount: money("amount").notNull(),
+    oneOff: boolean("one_off").notNull().default(false),
+    createdAt,
+  },
+  (t) => [uniqueIndex("incomes_user_month_oneoff_uq").on(t.userId, t.month, t.oneOff)],
+);
+
+/** Regras de categorização: trecho da descrição ou categoria da Pluggy -> sua categoria. */
+export const categoryRules = pgTable(
+  "category_rules",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    matchType: text("match_type").notNull(), // description | pluggy_category
+    pattern: text("pattern").notNull(),
+    categoryId: uuid("category_id")
+      .notNull()
+      .references(() => categories.id, { onDelete: "cascade" }),
+    createdAt,
+  },
+  (t) => [index("category_rules_user_idx").on(t.userId)],
+);
+
+/**
+ * Limite mensal por categoria. `month` = primeiro dia do mês.
+ * Vale a partir desse mês até o próximo registro da mesma categoria.
+ */
 export const budgets = pgTable(
   "budgets",
   {

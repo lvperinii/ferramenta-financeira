@@ -12,6 +12,7 @@ import { getSessionEmail } from "@/lib/session";
 import { getOrCreateUserId } from "@/lib/users";
 import { ConnectBank } from "./components/ConnectBank";
 import { ConnectionActions } from "./components/ConnectionActions";
+import { Nav } from "./components/Nav";
 import styles from "./page.module.css";
 
 const STATUS_LABEL: Record<string, string> = {
@@ -196,6 +197,7 @@ async function Painel() {
 export default function Home() {
   return (
     <main className={styles.main}>
+      <Nav current="/" />
       <h1>Controle Financeiro</h1>
       <Suspense fallback={<p>Carregando…</p>}>
         <Painel />
