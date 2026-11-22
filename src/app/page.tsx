@@ -6,6 +6,7 @@ import { signOut } from "@/auth";
 import { getDb } from "@/db";
 import { accounts, connections, transactions } from "@/db/schema";
 import { getServerEnv } from "@/lib/env";
+import { cardSignInversion } from "@/lib/finance/load";
 import { formatBRL } from "@/lib/money";
 import { pluggyWebhookUrl } from "@/lib/pluggy";
 import { getSessionEmail } from "@/lib/session";
@@ -74,6 +75,8 @@ async function Painel() {
       amount: transactions.amount,
       currencyCode: transactions.currencyCode,
       category: transactions.pluggyCategory,
+      accountId: accounts.id,
+      accountType: accounts.type,
       accountName: accounts.name,
     })
     .from(transactions)
@@ -82,6 +85,16 @@ async function Painel() {
     .where(eq(connections.userId, userId))
     .orderBy(desc(transactions.date), desc(transactions.createdAt))
     .limit(20);
+
+  // Cartões: compra aparece positiva (aumenta a dívida) e estorno negativo,
+  // já corrigindo bancos que mandam o sinal invertido.
+  const inverted = await cardSignInversion(userId);
+  const shown = recent.map((t) => {
+    if (t.accountType !== "CREDIT") return { ...t, display: t.amount, good: !t.amount.startsWith("-") };
+    const flip = !inverted.get(t.accountId);
+    const display = flip ? (t.amount.startsWith("-") ? t.amount.slice(1) : `-${t.amount}`) : t.amount;
+    return { ...t, display, good: display.startsWith("-") };
+  });
 
   async function sair() {
     "use server";
@@ -160,7 +173,7 @@ async function Painel() {
 
       <section className={styles.card}>
         <h2>Últimas transações</h2>
-        {recent.length === 0 ? (
+        {shown.length === 0 ? (
           <p className={styles.muted}>Nenhuma transação ainda.</p>
         ) : (
           <table className={styles.table}>
@@ -173,7 +186,7 @@ async function Painel() {
               </tr>
             </thead>
             <tbody>
-              {recent.map((t) => (
+              {shown.map((t) => (
                 <tr key={t.id}>
                   <td>{dateOnly.format(new Date(`${t.date}T00:00:00Z`))}</td>
                   <td>
@@ -181,8 +194,8 @@ async function Painel() {
                     <div className={styles.muted}>{t.accountName}</div>
                   </td>
                   <td>{t.category ?? "—"}</td>
-                  <td className={`${styles.num} ${t.amount.startsWith("-") ? styles.negative : styles.positive}`}>
-                    {formatBRL(t.amount, t.currencyCode)}
+                  <td className={`${styles.num} ${t.good ? styles.positive : t.accountType === "CREDIT" ? "" : styles.negative}`}>
+                    {formatBRL(t.display, t.currencyCode)}
                   </td>
                 </tr>
               ))}

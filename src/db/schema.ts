@@ -41,6 +41,10 @@ export const connections = pgTable(
     pluggyItemId: text("pluggy_item_id").notNull(),
     connectorName: text("connector_name"),
     status: text("status").notNull(), // ex.: UPDATED, UPDATING, LOGIN_ERROR, WAITING_USER_INPUT
+    // Diagnóstico: resultado da última execução na Pluggy e detalhe por produto
+    // (só booleanos, datas e avisos — nenhum dado financeiro).
+    executionStatus: text("execution_status"),
+    statusDetail: jsonb("status_detail"),
     lastSyncedAt: timestamp("last_synced_at", { withTimezone: true }),
     createdAt,
     updatedAt,
@@ -170,6 +174,8 @@ export const cards = pgTable(
     dueDay: integer("due_day").notNull(),
     closingDayGoesTo: text("closing_day_goes_to").notNull().default("next"), // next | current
     installmentDateMode: text("installment_date_mode").notNull().default("purchase"), // purchase | posting
+    // Sinal das compras enviado pelo banco: auto | normal | inverted
+    signMode: text("sign_mode").notNull().default("auto"),
     rewards: text("rewards"),
     createdAt,
   },

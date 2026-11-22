@@ -587,3 +587,27 @@ export function dueDateInMonth(month: string, card: CardRules): string {
   const [y, m] = month.split("-").map(Number);
   return fmtDate(clampDay(y, m, card.dueDay));
 }
+
+// ---------------------------------------------------------------- Sinal dos lançamentos do cartão
+
+/**
+ * Como o banco envia o sinal das compras do cartão:
+ * "auto" detecta pelos dados; "normal" = compras como DEBIT (negativas no banco local);
+ * "inverted" = compras como CREDIT (positivas) — o app inverte.
+ */
+export type SignMode = "auto" | "normal" | "inverted";
+
+/**
+ * Num cartão, compras são a grande maioria dos lançamentos. Se a maioria dos
+ * lançamentos (fora pagamentos de fatura) vier com sinal de entrada, o banco
+ * manda as compras invertidas. Empate ou sem dados: não inverte.
+ */
+export function shouldInvert(positiveCount: number, negativeCount: number): boolean {
+  return positiveCount > negativeCount;
+}
+
+export function resolveInversion(mode: SignMode, positiveCount: number, negativeCount: number): boolean {
+  if (mode === "inverted") return true;
+  if (mode === "normal") return false;
+  return shouldInvert(positiveCount, negativeCount);
+}

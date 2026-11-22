@@ -82,6 +82,7 @@ const cardSchema = z.object({
   dueDay: day,
   closingDayGoesTo: z.enum(["next", "current"]),
   installmentDateMode: z.enum(["purchase", "posting"]),
+  signMode: z.enum(["auto", "normal", "inverted"]),
   rewards: optionalText(120),
 });
 
@@ -113,6 +114,7 @@ export async function salvarCartao(formData: FormData): Promise<void> {
     dueDay: v.dueDay,
     closingDayGoesTo: v.closingDayGoesTo,
     installmentDateMode: v.installmentDateMode,
+    signMode: v.signMode,
     rewards: v.rewards,
   };
   try {

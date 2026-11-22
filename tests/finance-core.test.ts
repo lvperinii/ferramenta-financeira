@@ -21,6 +21,7 @@ import {
   parseUserAmount,
   projectInstallments,
   purchasesBetween,
+  resolveInversion,
   valueForMonth,
 } from "../src/lib/finance/core.ts";
 
@@ -251,5 +252,24 @@ describe("ciclo aberto", () => {
   });
   it("vencimento na competência", () => {
     assert.equal(dueDateInMonth("2027-02", { ...A, dueDay: 30 }), "2027-02-28");
+  });
+});
+
+describe("sinal do cartão", () => {
+  it("detecta compras invertidas pela maioria", () => {
+    assert.equal(resolveInversion("auto", 40, 3), true);
+    assert.equal(resolveInversion("auto", 2, 50), false);
+    assert.equal(resolveInversion("auto", 0, 0), false);
+    assert.equal(resolveInversion("normal", 40, 3), false);
+    assert.equal(resolveInversion("inverted", 0, 9), true);
+  });
+  it("cartão invertido: compras viram gasto e pagamento continua ignorado", () => {
+    const inverted = [
+      tx({ id: "c", date: "2026-11-20", amountCents: 20000 }),
+      tx({ id: "r", date: "2026-11-21", amountCents: -5000, description: "ESTORNO" }),
+      tx({ id: "p", date: "2026-11-10", amountCents: -500000, description: "PAGAMENTO RECEBIDO" }),
+    ].map((t) => ({ ...t, amountCents: -t.amountCents }));
+    const e = cardEntries(inverted, cards);
+    assert.deepEqual(e.map((x) => [x.id, x.cents]), [["c", 20000], ["r", -5000]]);
   });
 });
