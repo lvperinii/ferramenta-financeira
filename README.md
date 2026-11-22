@@ -33,7 +33,8 @@ Abra http://localhost:3000.
 |---|---|
 | `npm run dev` | Servidor de desenvolvimento |
 | `npm run build` | Build de produção |
-| `npm run check` | Lint + typecheck |
+| `npm run check` | Lint + typecheck + testes |
+| `npm test` | Testes das regras de fatura e orçamento |
 | `npm run db:generate` | Gera migração SQL a partir de `src/db/schema.ts` |
 | `npm run db:migrate` | Aplica migrações (usa `DATABASE_URL_UNPOOLED`) |
 

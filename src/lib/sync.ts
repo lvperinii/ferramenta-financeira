@@ -1,8 +1,8 @@
 import "server-only";
 import { and, eq, gte, inArray, notInArray, sql } from "drizzle-orm";
-import type { Account, Investment, Transaction } from "pluggy-sdk";
+import type { Account, CreditCardBills, Investment, Transaction } from "pluggy-sdk";
 import { getDb } from "@/db";
-import { accounts, connections, investments, transactions } from "@/db/schema";
+import { accounts, connections, creditCardBills, investments, transactions } from "@/db/schema";
 import { signedAmount, toMoney } from "@/lib/money";
 import { getPluggyClient, isPluggyNotFound } from "@/lib/pluggy";
 
@@ -11,7 +11,7 @@ const SYNC_WINDOW_DAYS = 365;
 const BATCH_SIZE = 200;
 
 export type SyncResult =
-  | { status: "synced"; accounts: number; transactions: number; investments: number }
+  | { status: "synced"; accounts: number; transactions: number; investments: number; bills: number }
   | { status: "not_ready"; itemStatus: string }
   | { status: "deleted" };
 
@@ -38,6 +38,20 @@ async function fetchAllInvestments(itemId: string): Promise<Investment[]> {
   let page = 1;
   for (;;) {
     const response = await client.fetchInvestments(itemId, undefined, { page, pageSize: 100 });
+    all.push(...response.results);
+    if (page >= response.totalPages || response.results.length === 0) break;
+    page += 1;
+  }
+  return all;
+}
+
+/** Busca todas as páginas de faturas de um cartão. */
+async function fetchAllBills(accountId: string): Promise<CreditCardBills[]> {
+  const client = getPluggyClient();
+  const all: CreditCardBills[] = [];
+  let page = 1;
+  for (;;) {
+    const response = await client.fetchCreditCardBills(accountId, { page, pageSize: 100 });
     all.push(...response.results);
     if (page >= response.totalPages || response.results.length === 0) break;
     page += 1;
@@ -148,6 +162,10 @@ export async function syncConnection(connectionId: string): Promise<SyncResult> 
             currencyCode: t.currencyCode ?? "BRL",
             pluggyCategory: t.category,
             status: t.status ?? null,
+            purchaseDate: t.creditCardMetadata?.purchaseDate ? isoDate(t.creditCardMetadata.purchaseDate) : null,
+            installmentNumber: t.creditCardMetadata?.installmentNumber ?? null,
+            totalInstallments: t.creditCardMetadata?.totalInstallments ?? null,
+            pluggyBillId: t.creditCardMetadata?.billId ?? null,
             updatedAt: new Date(),
           })),
         )
@@ -161,6 +179,10 @@ export async function syncConnection(connectionId: string): Promise<SyncResult> 
             currencyCode: sql`excluded.currency_code`,
             pluggyCategory: sql`excluded.pluggy_category`,
             status: sql`excluded.status`,
+            purchaseDate: sql`excluded.purchase_date`,
+            installmentNumber: sql`excluded.installment_number`,
+            totalInstallments: sql`excluded.total_installments`,
+            pluggyBillId: sql`excluded.pluggy_bill_id`,
             updatedAt: sql`excluded.updated_at`,
           },
           setWhere: eq(transactions.accountId, localAccountId),
@@ -183,6 +205,47 @@ export async function syncConnection(connectionId: string): Promise<SyncResult> 
       for (const batch of chunks(stale, BATCH_SIZE)) {
         await db.delete(transactions).where(inArray(transactions.id, batch));
       }
+    }
+  }
+
+  // ---- Faturas de cartão ----
+  // Nem todo banco oferece faturas; uma falha aqui não interrompe a sincronização.
+  let billCount = 0;
+  for (const account of remoteAccounts) {
+    if (account.type !== "CREDIT") continue;
+    const localAccountId = accountIdByPluggyId.get(account.id);
+    if (!localAccountId) continue;
+    let bills: CreditCardBills[];
+    try {
+      bills = await fetchAllBills(account.id);
+    } catch (error) {
+      console.error("sync: faturas indisponíveis", error instanceof Error ? error.name : "unknown");
+      continue;
+    }
+    billCount += bills.length;
+    for (const batch of chunks(bills, BATCH_SIZE)) {
+      await db
+        .insert(creditCardBills)
+        .values(
+          batch.map((b) => ({
+            accountId: localAccountId,
+            pluggyBillId: b.id,
+            dueDate: isoDate(b.dueDate),
+            closingDate: b.billClosingDate ? isoDate(b.billClosingDate) : null,
+            totalAmount: toMoney(b.totalAmount),
+            updatedAt: new Date(),
+          })),
+        )
+        .onConflictDoUpdate({
+          target: creditCardBills.pluggyBillId,
+          set: {
+            dueDate: sql`excluded.due_date`,
+            closingDate: sql`excluded.closing_date`,
+            totalAmount: sql`excluded.total_amount`,
+            updatedAt: sql`excluded.updated_at`,
+          },
+          setWhere: eq(creditCardBills.accountId, localAccountId),
+        });
     }
   }
 
@@ -230,5 +293,6 @@ export async function syncConnection(connectionId: string): Promise<SyncResult> 
     accounts: remoteAccounts.length,
     transactions: transactionCount,
     investments: remoteInvestments.length,
+    bills: billCount,
   };
 }
