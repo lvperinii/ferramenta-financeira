@@ -141,8 +141,9 @@ Desenho escolhido: **qualquer** aviso de um item conhecido dispara uma
 ressincronização completa a partir da API. O conteúdo do aviso só serve para
 saber *qual* item atualizar — nunca como dado.
 
-1. `fetchItem` → atualiza status. Se 404 → apaga a conexão local (cascade).
-2. Se o status não for `UPDATED`, para aqui (dados ainda incompletos).
+1. `fetchItem` → atualiza status, `executionStatus` e `statusDetail` (diagnóstico). Se 404 → apaga a conexão local (cascade).
+2. Se o item estiver `UPDATING`/`MERGING`, para aqui (dados pela metade). Nos demais
+   status (inclusive `OUTDATED`, "erro na última execução") lê o que a Pluggy tem.
 3. Contas: `fetchAccounts` → *upsert*; contas que sumiram são apagadas.
 4. Transações: `fetchAllTransactions(accountId, { dateFrom })` (cursor; o método
    por páginas está obsoleto no SDK) dos últimos **365 dias** → *upsert* em lotes;
@@ -180,6 +181,11 @@ dinheiro sai), não pelo mês da compra — o dono usa o prazo do cartão de pro
   ciclo, deslocando pela parcela só se o cartão estiver no modo "data da compra".
 - Pagamentos de fatura (crédito no cartão com descrição de pagamento) são
   ignorados; outros créditos contam como estorno.
+- Sinal por banco: há bancos que mandam as compras do cartão como CREDIT. Por
+  conta de cartão, se a maioria dos lançamentos (fora pagamentos) vier com sinal
+  de entrada, o app inverte (`cardSignInversion`); o cartão tem ajuste manual
+  (`sign_mode`: auto/normal/inverted). Na página inicial, compras de cartão
+  aparecem positivas e estornos negativos.
 - Categoria: escolha manual → regra por trecho da descrição → regra por categoria
   da Pluggy → a própria categoria da Pluggy.
 - Dinheiro em centavos inteiros (`parseCents`/`centsToMoney`, conversão por texto).

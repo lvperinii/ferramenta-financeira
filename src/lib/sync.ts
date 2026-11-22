@@ -9,6 +9,7 @@ import { getPluggyClient, isPluggyNotFound } from "@/lib/pluggy";
 /** Janela de transações buscada a cada sincronização. */
 const SYNC_WINDOW_DAYS = 365;
 const BATCH_SIZE = 200;
+const IN_PROGRESS_STATUSES = new Set(["UPDATING", "MERGING"]);
 
 export type SyncResult =
   | { status: "synced"; accounts: number; transactions: number; investments: number; bills: number }
@@ -85,11 +86,19 @@ export async function syncConnection(connectionId: string): Promise<SyncResult> 
 
   await db
     .update(connections)
-    .set({ status: item.status, connectorName: item.connector?.name ?? connection.connectorName, updatedAt: new Date() })
+    .set({
+      status: item.status,
+      connectorName: item.connector?.name ?? connection.connectorName,
+      executionStatus: item.executionStatus ?? null,
+      statusDetail: item.statusDetail ?? null,
+      updatedAt: new Date(),
+    })
     .where(eq(connections.id, connection.id));
 
-  // Só há dados consistentes para ler quando o item terminou de atualizar.
-  if (item.status !== "UPDATED") {
+  // Durante uma atualização em andamento os dados podem estar pela metade.
+  // Nos demais status (inclusive OUTDATED = "erro na última execução" e
+  // LOGIN_ERROR) a Pluggy ainda serve o que foi coletado antes, então lemos.
+  if (IN_PROGRESS_STATUSES.has(item.status)) {
     return { status: "not_ready", itemStatus: item.status };
   }
 

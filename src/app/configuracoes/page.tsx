@@ -1,12 +1,12 @@
 import { Suspense } from "react";
 import { redirect } from "next/navigation";
 import { connection } from "next/server";
-import { and, desc, eq, isNotNull } from "drizzle-orm";
+import { and, count, desc, eq, isNotNull, max, sql } from "drizzle-orm";
 import { getDb } from "@/db";
-import { accounts, budgets, cards, categories, categoryRules, connections, fixedExpenses, incomes, transactions } from "@/db/schema";
+import { accounts, budgets, cards, categories, categoryRules, connections, creditCardBills, fixedExpenses, incomes, transactions } from "@/db/schema";
 import { monthOf, parseCents } from "@/lib/finance/core";
 import { brlCents, monthLabel } from "@/lib/finance/format";
-import { todaySaoPaulo } from "@/lib/finance/load";
+import { cardSignInversion, todaySaoPaulo } from "@/lib/finance/load";
 import { getSessionEmail } from "@/lib/session";
 import { getOrCreateUserId } from "@/lib/users";
 import { Nav } from "../components/Nav";
@@ -90,6 +90,14 @@ function CardForm({ card, creditAccounts }: { card?: CardRow; creditAccounts: { 
         </select>
       </label>
       <label>
+        Sinal das compras
+        <select name="signMode" defaultValue={card?.signMode ?? "auto"}>
+          <option value="auto">detectar automaticamente</option>
+          <option value="normal">banco manda compras como débito</option>
+          <option value="inverted">banco manda compras como crédito</option>
+        </select>
+      </label>
+      <label>
         Pontos/cashback
         <input name="rewards" maxLength={120} defaultValue={card?.rewards ?? ""} placeholder="Ex.: 2,2 pts/US$" />
       </label>
@@ -144,6 +152,32 @@ async function Configuracoes({ searchParams }: { searchParams: SearchParams }) {
       .where(and(eq(connections.userId, userId), isNotNull(transactions.pluggyCategory)))
       .orderBy(transactions.pluggyCategory),
   ]);
+
+  // ---- Diagnóstico das conexões (só contagens, datas e status; nenhum valor) ----
+  const myConnections = await db
+    .select({ id: connections.id, connectorName: connections.connectorName, status: connections.status, executionStatus: connections.executionStatus, statusDetail: connections.statusDetail, lastSyncedAt: connections.lastSyncedAt })
+    .from(connections)
+    .where(eq(connections.userId, userId))
+    .orderBy(connections.createdAt);
+  const accountStats = await db
+    .select({
+      id: accounts.id,
+      connectionId: accounts.connectionId,
+      name: accounts.name,
+      type: accounts.type,
+      txCount: count(transactions.id),
+      lastTx: max(transactions.date),
+      bills: sql<number>`(select count(*) from ${creditCardBills} where ${creditCardBills.accountId} = ${accounts.id})`.mapWith(Number),
+    })
+    .from(accounts)
+    .innerJoin(connections, eq(accounts.connectionId, connections.id))
+    .leftJoin(transactions, eq(transactions.accountId, accounts.id))
+    .where(eq(connections.userId, userId))
+    .groupBy(accounts.id)
+    .orderBy(accounts.name);
+  const inverted = await cardSignInversion(userId);
+  const cardByAccount = new Map(myCards.filter((c) => c.accountId).map((c) => [c.accountId, c.name]));
+  const productLabel: Record<string, string> = { creditCards: "cartões", transactions: "transações" };
 
   return (
     <>
@@ -339,6 +373,71 @@ async function Configuracoes({ searchParams }: { searchParams: SearchParams }) {
         {pluggyCats.length > 0 && (
           <p className={styles.muted}>Categorias recebidas da Pluggy: {pluggyCats.map((c) => c.name).join(", ")}</p>
         )}
+      </section>
+
+      <section className={styles.card}>
+        <h2>Diagnóstico das conexões</h2>
+        <p className={styles.muted}>
+          Para entender por que um banco ou cartão não mostra dados. Status vindo da Pluggy na última sincronização; contagens do banco local.
+        </p>
+        {myConnections.map((c) => {
+          const detail = (c.statusDetail ?? null) as Record<string, { isUpdated?: boolean; lastUpdatedAt?: string | null; warnings?: { message?: string }[] } | null> | null;
+          const problems = detail
+            ? Object.entries(productLabel)
+                .map(([k, label]) => {
+                  const d = detail[k];
+                  if (!d || d.isUpdated) return null;
+                  const msg = d.warnings?.map((w) => w.message).filter(Boolean).join("; ");
+                  return `${label} não coletados na última execução${msg ? ` (${msg})` : ""}`;
+                })
+                .filter(Boolean)
+            : [];
+          const accs = accountStats.filter((a) => a.connectionId === c.id);
+          return (
+            <div key={c.id} className={styles.listItem} style={{ display: "block" }}>
+              <strong>{c.connectorName ?? "Banco"}</strong>
+              <div className={styles.muted}>
+                status {c.status}
+                {c.executionStatus ? ` · última execução ${c.executionStatus}` : ""}
+                {c.lastSyncedAt ? ` · sincronizado aqui em ${c.lastSyncedAt.toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" })}` : " · nunca sincronizado aqui"}
+              </div>
+              {problems.map((p) => (
+                <div key={p} className={styles.error}>
+                  {p}
+                </div>
+              ))}
+              <table className={styles.table}>
+                <thead>
+                  <tr>
+                    <th>Conta</th>
+                    <th className={styles.num}>Transações</th>
+                    <th>Última</th>
+                    <th className={styles.num}>Faturas</th>
+                    <th>Cartão cadastrado</th>
+                    <th>Sinal</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {accs.map((a) => (
+                    <tr key={a.id}>
+                      <td>
+                        {a.name}
+                        {a.type === "CREDIT" && <span className={styles.muted}> (cartão)</span>}
+                      </td>
+                      <td className={`${styles.num} ${a.type === "CREDIT" && a.txCount === 0 ? styles.error : ""}`}>{a.txCount}</td>
+                      <td>{a.lastTx ?? "—"}</td>
+                      <td className={styles.num}>{a.type === "CREDIT" ? a.bills : "—"}</td>
+                      <td className={a.type === "CREDIT" && !cardByAccount.has(a.id) ? styles.error : undefined}>
+                        {a.type === "CREDIT" ? (cardByAccount.get(a.id) ?? "não ligado — cadastre acima") : "—"}
+                      </td>
+                      <td>{a.type === "CREDIT" ? (inverted.get(a.id) ? "invertido (corrigido)" : "normal") : "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          );
+        })}
       </section>
 
       <datalist id="categorias">

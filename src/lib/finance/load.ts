@@ -1,5 +1,5 @@
 import "server-only";
-import { and, eq, gte, inArray, isNotNull } from "drizzle-orm";
+import { and, eq, gte, inArray, isNotNull, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import {
   accounts,
@@ -14,6 +14,7 @@ import {
   transactions,
 } from "@/db/schema";
 import {
+  BILL_PAYMENT_PATTERNS,
   type CardRules,
   type CardTransaction,
   type CategoryRule,
@@ -26,8 +27,48 @@ import {
   monthOf,
   parseCents,
   projectInstallments,
+  resolveInversion,
+  type SignMode,
   valueForMonth,
 } from "./core";
+
+function toSignMode(v: string | null | undefined): SignMode {
+  return v === "normal" || v === "inverted" ? v : "auto";
+}
+
+/**
+ * Para cada conta de cartão do usuário: o banco manda as compras com sinal
+ * invertido? Conta lançamentos positivos x negativos dos últimos 13 meses,
+ * fora pagamentos de fatura, e aplica o ajuste manual do cartão (se houver).
+ */
+export async function cardSignInversion(userId: string): Promise<Map<string, boolean>> {
+  const db = getDb();
+  const since = `${addMonths(monthOf(todaySaoPaulo()), -13)}-01`;
+  // array[...] explícito: o Drizzle expande um array JS como tupla ($1, $2, …).
+  const patterns = sql.join(
+    BILL_PAYMENT_PATTERNS.map((p) => sql`${`%${p}%`}`),
+    sql`, `,
+  );
+  const notPayment = sql`not (upper(${transactions.description}) like any (array[${patterns}]::text[]))`;
+  const rows = await db
+    .select({
+      accountId: accounts.id,
+      positive: sql<number>`count(*) filter (where ${transactions.amount} > 0 and ${notPayment})`.mapWith(Number),
+      negative: sql<number>`count(*) filter (where ${transactions.amount} < 0 and ${notPayment})`.mapWith(Number),
+    })
+    .from(accounts)
+    .innerJoin(connections, eq(accounts.connectionId, connections.id))
+    .leftJoin(transactions, and(eq(transactions.accountId, accounts.id), gte(transactions.date, since)))
+    .where(and(eq(connections.userId, userId), eq(accounts.type, "CREDIT")))
+    .groupBy(accounts.id);
+  const modes = new Map(
+    (await db.select({ accountId: cards.accountId, signMode: cards.signMode }).from(cards).where(eq(cards.userId, userId))).map((c) => [
+      c.accountId,
+      toSignMode(c.signMode),
+    ]),
+  );
+  return new Map(rows.map((r) => [r.accountId, resolveInversion(modes.get(r.accountId) ?? "auto", r.positive, r.negative)]));
+}
 
 /** Hoje no fuso de São Paulo, "AAAA-MM-DD". */
 export function todaySaoPaulo(): string {
@@ -117,13 +158,14 @@ export async function loadFinance(userId: string): Promise<FinanceData> {
       .from(transactions)
       .leftJoin(categories, and(eq(transactions.categoryId, categories.id), eq(categories.userId, userId)))
       .where(and(inArray(transactions.accountId, linkedAccountIds), gte(transactions.date, since)));
+    const inverted = await cardSignInversion(userId);
     cardTxs = rows.map((r) => ({
       id: r.id,
       cardId: cardByAccount.get(r.accountId) ?? "",
       date: r.date,
       purchaseDate: r.purchaseDate,
       description: r.description,
-      amountCents: parseCents(r.amount),
+      amountCents: inverted.get(r.accountId) ? -parseCents(r.amount) : parseCents(r.amount),
       installmentNumber: r.installmentNumber,
       totalInstallments: r.totalInstallments,
       billDueDate: r.pluggyBillId ? (billDue.get(r.pluggyBillId) ?? null) : null,
