@@ -487,3 +487,103 @@ export function cardsToday(cards: CardRules[], entries: Entry[], today: string):
     })
     .sort((a, b) => b.daysOfCredit - a.daysOfCredit);
 }
+
+// ---------------------------------------------------------------- Séries para o painel
+
+export type CardMonth = { month: string; byCard: Map<string, { postedCents: number; projectedCents: number }>; totalCents: number };
+
+/** Fatura de cada cartão em cada mês (lançado + parcelas projetadas). */
+export function billsByCard(entries: Entry[], start: string, months: number): CardMonth[] {
+  const out: CardMonth[] = [];
+  for (let i = 0; i < months; i++) {
+    const month = addMonths(start, i);
+    const byCard = new Map<string, { postedCents: number; projectedCents: number }>();
+    let totalCents = 0;
+    for (const e of entries) {
+      if (e.month !== month || !e.cardId) continue;
+      const v = byCard.get(e.cardId) ?? { postedCents: 0, projectedCents: 0 };
+      if (e.origin === "projected") v.projectedCents += e.cents;
+      else v.postedCents += e.cents;
+      byCard.set(e.cardId, v);
+      totalCents += e.cents;
+    }
+    out.push({ month, byCard, totalCents });
+  }
+  return out;
+}
+
+/** Total comprado por dia (data da compra), sem parcelas antigas nem projeções; inclui dias zerados. */
+export function dailySpend(entries: Entry[], from: string, to: string): { date: string; cents: number }[] {
+  const totals = new Map<string, number>();
+  for (const e of purchasesBetween(entries, from, to)) totals.set(e.date, (totals.get(e.date) ?? 0) + e.cents);
+  const out: { date: string; cents: number }[] = [];
+  for (let d = from; d <= to; d = addDays(d, 1)) out.push({ date: d, cents: totals.get(d) ?? 0 });
+  return out;
+}
+
+export type ActiveInstallment = {
+  key: string;
+  description: string;
+  cardId: string | null;
+  category: string;
+  installmentCents: number;
+  /** Parcela que cai no mês de referência (ou a próxima, se nenhuma cair nele). */
+  currentInstallment: number;
+  totalInstallments: number;
+  /** Parcelas que ainda vão cair DEPOIS do mês de referência. */
+  remainingAfter: number;
+  remainingCents: number;
+  lastMonth: string;
+};
+
+/** Compras parceladas que ainda têm parcelas no mês de referência ou depois. */
+export function activeInstallments(entries: Entry[], refMonth: string): ActiveInstallment[] {
+  const groups = new Map<string, Entry[]>();
+  for (const e of entries) {
+    if (e.origin === "fixed" || !e.installment || !e.totalInstallments || e.cents <= 0) continue;
+    // Projeções carregam o id da parcela de origem antes do "#p".
+    const root = e.origin === "projected" ? e.id.split("#p")[0] : e.id;
+    const key = [e.cardId, e.totalInstallments, Math.round(e.cents / 100), e.originDate ?? "", baseDescription(e.description)].join("|");
+    const list = groups.get(key) ?? [];
+    list.push({ ...e, id: root });
+    groups.set(key, list);
+  }
+  const out: ActiveInstallment[] = [];
+  for (const [key, list] of groups) {
+    const future = list.filter((e) => e.month >= refMonth).sort((a, b) => (a.month < b.month ? -1 : 1));
+    if (future.length === 0) continue;
+    const current = future[0];
+    const after = future.filter((e) => e.month > refMonth);
+    const last = future[future.length - 1];
+    out.push({
+      key,
+      description: current.description,
+      cardId: current.cardId,
+      category: current.category,
+      installmentCents: current.cents,
+      currentInstallment: current.installment ?? 0,
+      totalInstallments: current.totalInstallments ?? 0,
+      remainingAfter: after.length,
+      remainingCents: sum(after),
+      lastMonth: last.month,
+    });
+  }
+  return out.sort((a, b) => (a.lastMonth < b.lastMonth ? -1 : a.lastMonth > b.lastMonth ? 1 : b.installmentCents - a.installmentCents));
+}
+
+/** Ciclo aberto do cartão hoje: do dia seguinte ao fechamento anterior até o próximo fechamento. */
+export function cycleProgress(today: string, card: CardRules): { start: string; end: string; elapsedDays: number; totalDays: number } {
+  const end = closingForPurchase(today, card);
+  const e = parseDate(end);
+  const prev = addMonthsYM(e.y, e.m, -1);
+  const prevClosing = fmtDate(clampDay(prev.y, prev.m, card.closingDay));
+  const start = addDays(prevClosing, 1);
+  const totalDays = daysBetween(prevClosing, end);
+  return { start, end, elapsedDays: Math.min(totalDays, Math.max(0, daysBetween(prevClosing, today))), totalDays };
+}
+
+/** Data de vencimento do cartão numa competência "AAAA-MM". */
+export function dueDateInMonth(month: string, card: CardRules): string {
+  const [y, m] = month.split("-").map(Number);
+  return fmtDate(clampDay(y, m, card.dueDay));
+}

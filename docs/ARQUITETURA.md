@@ -184,7 +184,18 @@ dinheiro sai), não pelo mês da compra — o dono usa o prazo do cartão de pro
   da Pluggy → a própria categoria da Pluggy.
 - Dinheiro em centavos inteiros (`parseCents`/`centsToMoney`, conversão por texto).
 - `load.ts` (servidor): lê tudo do usuário logado e monta os lançamentos.
-- Páginas: `/orcamento` (visões) e `/configuracoes` (cartões, renda, contas fixas,
+- Painel (`/orcamento`, "Painel do cartão"): fatura da competência em destaque,
+  KPIs (renda, fixas, sobra, renda comprometida), faturas por cartão nos próximos
+  12 meses (colunas empilhadas + linha "renda − fixas"), orçamento por categoria
+  (medidores separando parcelas antigas), compras por dia (30 dias), cartões hoje
+  (ciclo, prazo, limite usado, melhor cartão), comprometimento da renda (fixas,
+  parcelas, à vista) e parcelas ativas (quanto libera quando terminam).
+  Gráficos em SVG gerado no servidor (sem biblioteca nova, compatível com a CSP);
+  só o tooltip roda no navegador (`TooltipLayer`, mouse e teclado). Paleta
+  categórica validada com o validador da skill dataviz contra as superfícies do
+  app nos dois temas; cada gráfico tem legenda, tooltip e "Ver tabela". A cor de
+  cada cartão segue a ordem de cadastro, nunca a posição num ranking.
+- Páginas: `/orcamento` (painel) e `/configuracoes` (cartões, renda, contas fixas,
   limites, regras); Server Actions em `app/configuracoes/actions.ts` conferem a
   sessão, validam com zod e filtram toda escrita pelo usuário.
 

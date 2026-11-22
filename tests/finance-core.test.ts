@@ -3,9 +3,14 @@ import { describe, it } from "node:test";
 import {
   type CardRules,
   addDays,
+  activeInstallments,
+  billsByCard,
+  dailySpend,
   type CardTransaction,
   cardEntries,
   cardsToday,
+  cycleProgress,
+  dueDateInMonth,
   categorize,
   centsToMoney,
   dueForPurchase,
@@ -192,5 +197,59 @@ describe("resumo do mês e comprometimento", () => {
       purchasesBetween(all, "2026-11-16", "2026-11-22").map((e) => e.id),
       ["t9"],
     );
+  });
+});
+
+describe("séries do painel", () => {
+  const real = cardEntries(
+    [
+      tx({ id: "a1", date: "2026-11-20", amountCents: -10000 }),
+      tx({ id: "b1", cardId: "b", date: "2026-11-05", amountCents: -4000 }),
+      tx({ id: "p1", date: "2026-10-10", purchaseDate: "2026-10-10", amountCents: -3000, description: "LOJA 01/03", installmentNumber: 1, totalInstallments: 3 }),
+    ],
+    cards,
+  );
+  const all = [...real, ...projectInstallments(real)];
+
+  it("fatura por cartão e mês", () => {
+    const b = billsByCard(all, "2026-11", 3);
+    assert.deepEqual(
+      b.map((m) => [m.month, m.totalCents]),
+      [
+        ["2026-11", 3000],
+        ["2026-12", 17000],
+        ["2027-01", 3000],
+      ],
+    );
+    assert.deepEqual(b[1].byCard.get("a"), { postedCents: 10000, projectedCents: 3000 });
+    assert.deepEqual(b[1].byCard.get("b"), { postedCents: 4000, projectedCents: 0 });
+  });
+
+  it("gasto por dia preenche dias vazios", () => {
+    const d = dailySpend(all, "2026-11-19", "2026-11-21");
+    assert.deepEqual(
+      d.map((x) => x.cents),
+      [0, 10000, 0],
+    );
+  });
+
+  it("parcelas ativas a partir de um mês", () => {
+    const a = activeInstallments(all, "2026-12");
+    assert.equal(a.length, 1);
+    assert.equal(a[0].currentInstallment, 2);
+    assert.equal(a[0].remainingAfter, 1);
+    assert.equal(a[0].remainingCents, 3000);
+    assert.equal(a[0].lastMonth, "2027-01");
+    assert.equal(activeInstallments(all, "2027-02").length, 0);
+  });
+});
+
+describe("ciclo aberto", () => {
+  it("progresso entre fechamentos", () => {
+    assert.deepEqual(cycleProgress("2026-11-22", A), { start: "2026-10-26", end: "2026-11-25", elapsedDays: 28, totalDays: 31 });
+    assert.deepEqual(cycleProgress("2026-11-25", A), { start: "2026-11-26", end: "2026-12-25", elapsedDays: 0, totalDays: 30 });
+  });
+  it("vencimento na competência", () => {
+    assert.equal(dueDateInMonth("2027-02", { ...A, dueDay: 30 }), "2027-02-28");
   });
 });
