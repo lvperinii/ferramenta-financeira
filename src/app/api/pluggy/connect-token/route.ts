@@ -43,7 +43,9 @@ export async function POST(request: Request) {
     const { accessToken } = await getPluggyClient().createConnectToken(itemId, {
       clientUserId: pluggyUserId(email),
       webhookUrl: pluggyWebhookUrl(),
-      avoidDuplicates: true,
+      // Sem avoidDuplicates: o MeuPluggy exige um item por banco, todos do mesmo
+      // conector e usuário, e a opção bloqueava a 2ª conexão. Reconectar um banco
+      // existente continua atualizando o mesmo item (itemId acima).
     });
     return Response.json({ accessToken, itemId: itemId ?? null }, { headers: noStore });
   } catch (error) {
