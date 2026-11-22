@@ -34,8 +34,18 @@ export function todaySaoPaulo(): string {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
 }
 
+export type CardInfo = {
+  /** Posição fixa na paleta (ordem de cadastro): a cor acompanha o cartão. */
+  colorSlot: number;
+  bank: string | null;
+  creditLimitCents: number | null;
+  /** Saldo informado pela Pluggy para a conta do cartão (valor usado do limite). */
+  usedCents: number | null;
+};
+
 export type FinanceData = {
   today: string;
+  cardInfo: Map<string, CardInfo>;
   entries: Entry[];
   cards: CardRules[];
   cardNames: Map<string, string>;
@@ -50,10 +60,10 @@ export async function loadFinance(userId: string): Promise<FinanceData> {
   const today = todaySaoPaulo();
   const currentMonth = monthOf(today);
 
-  const myCards = await db.select().from(cards).where(eq(cards.userId, userId)).orderBy(cards.name);
+  const myCards = await db.select().from(cards).where(eq(cards.userId, userId)).orderBy(cards.createdAt, cards.id);
 
   const creditAccounts = await db
-    .select({ id: accounts.id, name: accounts.name })
+    .select({ id: accounts.id, name: accounts.name, balance: accounts.balance, creditLimit: accounts.creditLimit })
     .from(accounts)
     .innerJoin(connections, eq(accounts.connectionId, connections.id))
     .where(and(eq(connections.userId, userId), eq(accounts.type, "CREDIT")));
@@ -177,8 +187,25 @@ export async function loadFinance(userId: string): Promise<FinanceData> {
     budgetsByCategory.set(b.category, list);
   }
 
+  const accountById = new Map(creditAccounts.map((a) => [a.id, a]));
+  const cardInfo = new Map<string, CardInfo>(
+    myCards.map((c, i) => {
+      const acc = c.accountId ? accountById.get(c.accountId) : undefined;
+      return [
+        c.id,
+        {
+          colorSlot: i,
+          bank: c.bank,
+          creditLimitCents: acc?.creditLimit ? parseCents(acc.creditLimit) : null,
+          usedCents: acc ? Math.abs(parseCents(acc.balance)) : null,
+        },
+      ];
+    }),
+  );
+
   return {
     today,
+    cardInfo,
     entries: [...real, ...projectInstallments(real), ...fixed],
     cards: cardRules,
     cardNames: new Map(cardRules.map((c) => [c.id, c.name])),
