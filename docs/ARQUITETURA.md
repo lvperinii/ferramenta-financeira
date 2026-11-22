@@ -125,7 +125,10 @@ Ativos: HSTS, `nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy`,
 
 ### 4.2 Conectar um banco
 1. Botão "Conectar banco" (`src/app/components/ConnectBank.tsx`) → `POST /api/pluggy/connect-token` (exige sessão e mesma origem).
-2. Servidor cria o token com `createConnectToken(itemId?, { clientUserId, webhookUrl, avoidDuplicates })`.
+2. Servidor cria o token com `createConnectToken(itemId?, { clientUserId, webhookUrl })`.
+   Sem `avoidDuplicates`: no MeuPluggy cada banco é um item do mesmo conector e a
+   opção bloqueava a 2ª conexão. Cuidado: conectar o mesmo banco duas vezes duplica
+   as transações — use "Reconectar" em vez de "Conectar banco" para um banco já listado.
    *Atenção:* no `pluggy-sdk` 0.94 o 1º parâmetro é o `itemId` (só para **reconectar**); as opções vão no 2º.
    `webhookUrl` = `APP_URL` + `/api/webhooks/pluggy/` + `PLUGGY_WEBHOOK_SECRET` (só se `APP_URL` for HTTPS).
 3. Widget Pluggy Connect abre (iframe de `connect.pluggy.ai`); você autoriza no banco.
